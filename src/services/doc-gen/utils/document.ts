@@ -2,15 +2,19 @@ import { inMemoryDb } from './common'
 
 // Helper function to extract semantic content from HTML
 const extractSemanticContent = (html: string): string => {
-  // Step 1: Extract the body content with regex
+  // Step 1: Remove DOCTYPE, html, head tags completely
+  html = html
+    .replace(/<!DOCTYPE[^>]*>/i, '')
+    .replace(/<html[^>]*>|<\/html>/gi, '')
+    .replace(/<head[\s\S]*?<\/head>/i, '')
+
+  // Step 2: Extract the body content with regex
   const bodyMatch = /<body[^>]*>([\s\S]*?)<\/body>/i.exec(html)
   let bodyContent = bodyMatch && bodyMatch[1] ? bodyMatch[1].trim() : html
 
-  // Step 2: Clean the content
+  // Step 3: Clean the content
   bodyContent = bodyContent
-    // Remove head section if body extraction failed
-    .replace(/<head[\s\S]*?<\/head>/i, '')
-    // Remove script tags
+    // Remove script tags completely (with their content)
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     // Remove style tags
     .replace(/<style[\s\S]*?<\/style>/gi, '')
@@ -29,6 +33,8 @@ const extractSemanticContent = (html: string): string => {
     .replace(/\s+aria-[^=]*="[^"]*"/gi, '')
     // Remove role attributes
     .replace(/\s+role="[^"]*"/gi, '')
+    // Remove iframe tags with content
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
     // Remove empty tags except semantic ones
     .replace(
       /<(div|span|a|p|ul|ol|li|h[1-6]|section|article|header|footer|main|aside|nav|figure|figcaption|time|mark|table|tr|td|th|thead|tbody|tfoot)([^>]*)><\/\1>/gi,
@@ -46,18 +52,41 @@ const extractSemanticContent = (html: string): string => {
       ''
     )
 
-  // Step 3: Extract just text content from non-semantic tags but keep the semantic tags
+  // Step 4: Remove navigation elements
+  // First identify and remove navigation sections (common patterns in web frameworks)
+  bodyContent = bodyContent
+    // Remove navigation sections
+    .replace(/<nav[\s\S]*?<\/nav>/gi, '')
+    .replace(/<header[\s\S]*?<\/header>/gi, '')
+    .replace(/<footer[\s\S]*?<\/footer>/gi, '')
+    // Remove sidebar elements
+    .replace(/<aside[\s\S]*?<\/aside>/gi, '')
+    .replace(/<div[^>]*sidebar[^>]*>[\s\S]*?<\/div>/gi, '')
+    .replace(/<div[^>]*navigation[^>]*>[\s\S]*?<\/div>/gi, '')
+    .replace(/<div[^>]*menu[^>]*>[\s\S]*?<\/div>/gi, '')
+    // Remove UI framework specific navigation patterns
+    .replace(/<div[^>]*navbar[^>]*>[\s\S]*?<\/div>/gi, '')
+    .replace(/<ul[^>]*menu[^>]*>[\s\S]*?<\/ul>/gi, '')
+    .replace(/<div[^>]*nav[^>]*>[\s\S]*?<\/div>/gi, '')
+
+    // Remove common class-named VuePress/VitePress navigation elements (like in your example)
+    .replace(/<div[^>]*VPSidebar[^>]*>[\s\S]*?<\/div>/gi, '')
+    .replace(/<div[^>]*VPNav[^>]*>[\s\S]*?<\/div>/gi, '')
+    .replace(/<section[^>]*VPSidebarItem[^>]*>[\s\S]*?<\/section>/gi, '')
+    .replace(/<div[^>]*items[^>]*>[\s\S]*?<\/div>/gi, '')
+
+  // Step 5: Extract just text content from non-semantic tags but keep the semantic tags
   // First pass - remove all non-semantic opening tags except for specific semantic ones
   const semanticPattern =
-    /<(?!h[1-6]|p|ul|ol|li|table|tr|td|th|thead|tbody|tfoot|article|section|main|nav|header|footer|aside|figure|figcaption|blockquote|pre|code|strong|em|b|i|a|img|time|mark|dl|dt|dd)[a-zA-Z][^>]*>/g
+    /<(?!h[1-6]|p|ul|ol|li|table|tr|td|th|thead|tbody|tfoot|article|section|main|blockquote|pre|code|strong|em|b|i|a|img|time|mark|dl|dt|dd)[a-zA-Z][^>]*>/g
   bodyContent = bodyContent.replace(semanticPattern, '')
 
   // Second pass - remove all non-semantic closing tags
   const closeTagPattern =
-    /<\/(?!h[1-6]|p|ul|ol|li|table|tr|td|th|thead|tbody|tfoot|article|section|main|nav|header|footer|aside|figure|figcaption|blockquote|pre|code|strong|em|b|i|a|img|time|mark|dl|dt|dd)[a-zA-Z][^>]*>/g
+    /<\/(?!h[1-6]|p|ul|ol|li|table|tr|td|th|thead|tbody|tfoot|article|section|main|blockquote|pre|code|strong|em|b|i|a|img|time|mark|dl|dt|dd)[a-zA-Z][^>]*>/g
   bodyContent = bodyContent.replace(closeTagPattern, '')
 
-  // Clean up multiple line breaks and spaces
+  // Step 6: Clean up multiple line breaks and spaces
   bodyContent = bodyContent
     .replace(/\n\s*\n\s*\n/g, '\n\n')
     .replace(/[ \t]+/g, ' ')
@@ -65,6 +94,51 @@ const extractSemanticContent = (html: string): string => {
     .trim()
 
   return bodyContent
+}
+
+// Helper function to extract just the plain text with minimal formatting
+const extractPlainText = (html: string): string => {
+  // Start with semantic extraction to remove unnecessary elements
+  let content = extractSemanticContent(html)
+
+  // Convert HTML elements to plain text with minimal formatting
+  content = content
+    // Format headings
+    .replace(/<h1[^>]*>(.*?)<\/h1>/gi, '$1\n\n')
+    .replace(/<h2[^>]*>(.*?)<\/h2>/gi, '$1\n\n')
+    .replace(/<h3[^>]*>(.*?)<\/h3>/gi, '$1\n\n')
+    .replace(/<h4[^>]*>(.*?)<\/h4>/gi, '$1\n\n')
+    .replace(/<h5[^>]*>(.*?)<\/h5>/gi, '$1\n\n')
+    .replace(/<h6[^>]*>(.*?)<\/h6>/gi, '$1\n\n')
+    // Format paragraphs
+    .replace(/<p[^>]*>(.*?)<\/p>/gi, '$1\n\n')
+    // Format lists
+    .replace(/<li[^>]*>(.*?)<\/li>/gi, '• $1\n')
+    .replace(/<\/ul>|<\/ol>/gi, '\n')
+    // Format links - just keep the text
+    .replace(/<a[^>]*>(.*?)<\/a>/gi, '$1')
+    // Format emphasis
+    .replace(/<(b|strong)[^>]*>(.*?)<\/(b|strong)>/gi, '$2')
+    .replace(/<(i|em)[^>]*>(.*?)<\/(i|em)>/gi, '$2')
+    // Format code blocks
+    .replace(/<code[^>]*>(.*?)<\/code>/gi, '$1')
+    .replace(/<pre[^>]*>(.*?)<\/pre>/gi, '$1\n\n')
+    // Format line breaks
+    .replace(/<br\s*\/?>/gi, '\n')
+    // Remove any remaining tags
+    .replace(/<[^>]*>/g, '')
+    // Decode common HTML entities
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    // Remove consecutive line breaks
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+  return content
 }
 
 export const documentUtils = {
@@ -138,7 +212,7 @@ export const documentUtils = {
     const fileId = crypto.randomUUID()
     const fileName = `${encodeURIComponent(url.replace(/[^a-zA-Z0-9]/g, '_'))}_${fileId}.txt`
 
-    // Extract only semantic content for saving to the file
+    // Extract only plain text content for saving to the file
     const pages = htmlContent
       .split(/<!-- START OF PAGE: [^>]+ -->/)
       .map((part) => {
@@ -149,17 +223,8 @@ export const documentUtils = {
             ? part.substring(0, endMarkerIndex).trim()
             : part.trim()
 
-        // Further clean the content to ensure it's well-formatted
-        return pagePart
-          .replace(/<br\s*\/?>/gi, '\n')
-          .replace(/<\/p>\s*<p>/gi, '\n\n')
-          .replace(/<\/h[1-6]>/gi, '\n')
-          .replace(/<\/li>/gi, '\n')
-          .replace(/<\/tr>/gi, '\n')
-          .replace(/<\/table>/gi, '\n\n')
-          .replace(/<\/div>/gi, '\n')
-          .replace(/<\/section>/gi, '\n\n')
-          .replace(/<\/article>/gi, '\n\n')
+        // Convert to plain text instead of keeping HTML
+        return extractPlainText(pagePart)
       })
       .filter(Boolean)
       .join('\n\n--- New Page ---\n\n')
@@ -198,6 +263,7 @@ export const documentUtils = {
         .replace(/<em[^>]*>(.*?)<\/em>/gi, '*$1*')
         .replace(/<i[^>]*>(.*?)<\/i>/gi, '*$1*')
         .replace(/<code[^>]*>(.*?)<\/code>/gi, '`$1`')
+        .replace(/<pre[^>]*>(.*?)<\/pre>/gi, '```\n$1\n```\n\n')
         .replace(/<br\s*\/?>/gi, '\n')
         .replace(/<[^>]*>/g, '') // Remove any remaining tags
         .replace(/&nbsp;/g, ' ')
@@ -238,11 +304,8 @@ Wygenerowano: ${new Date().toLocaleString()}
       if (html) {
         const semanticContent = extractSemanticContent(html)
 
-        // Create a summary from the content
-        let summary = semanticContent
-          .replace(/<[^>]*>/g, '') // Remove all HTML tags for summary
-          .replace(/\s+/g, ' ') // Normalize whitespace
-          .trim()
+        // Create a summary from the content - use plain text for better readability
+        let summary = extractPlainText(semanticContent).trim()
 
         // Limit summary to first 300 characters
         if (summary.length > 300) {
