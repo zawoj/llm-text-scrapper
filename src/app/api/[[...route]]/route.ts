@@ -2,11 +2,12 @@ import { Hono } from 'hono'
 import { handle } from 'hono/vercel'
 import { zValidator } from '@hono/zod-validator'
 import { userFormSchema } from '@/hooks/users/schema'
+
+import { docGenService, delay } from './doc-gen'
 import {
   sitemapGeneratorInputSchema,
   docGenInputSchema,
 } from '@/hooks/doc-gen/schema'
-import { docGenService, delay } from './doc-gen'
 
 // Explicitly set the runtime to edge
 export const runtime = 'edge'

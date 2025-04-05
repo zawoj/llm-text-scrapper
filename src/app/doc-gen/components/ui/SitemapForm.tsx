@@ -3,7 +3,6 @@
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { sitemapGeneratorInputSchema } from '@/hooks/doc-gen/schema'
 import {
   Form,
   FormControl,
@@ -14,6 +13,7 @@ import {
 } from '@/components/elements/form'
 import { Input } from '@/components/elements/input'
 import { Button } from '@/components/elements/button'
+import { sitemapGeneratorInputSchema } from '@/hooks/doc-gen/schema'
 
 type FormData = z.infer<typeof sitemapGeneratorInputSchema>
 

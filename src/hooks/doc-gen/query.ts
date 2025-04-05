@@ -1,7 +1,10 @@
 import { useMutation } from '@tanstack/react-query'
 import { apiRoutes } from '../routes'
 import { queryKeys } from '../keys'
-import { sitemapGeneratorInputSchema, docGenInputSchema } from '@/db/schema'
+import {
+  sitemapGeneratorInputSchema,
+  docGenInputSchema,
+} from '@/hooks/doc-gen/schema'
 
 // Typy dla sitemap-gen
 type SitemapGenInput = typeof sitemapGeneratorInputSchema._type

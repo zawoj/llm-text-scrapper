@@ -1,11 +1,3 @@
-// Import fetch for HTML fetching
-// No need to import fetch - using native fetch API available in Edge Runtime
-
-// No need to import crypto - using Web Crypto API available in Edge Runtime
-import { db } from '@/db'
-import { eq, and } from 'drizzle-orm'
-import { websites, websiteSubpages } from '@/hooks/doc-gen/schema'
-
 // Definicje typów i baza danych w pamięci
 type SitemapEntry = {
   id?: number
@@ -51,52 +43,33 @@ export const docGenService = {
   // Inicjalizacja sitemap
   initSitemap: async (url: string): Promise<SitemapEntry> => {
     try {
-      // Sprawdź, czy mamy istniejący wpis dla tej strony w bazie
-      const existingWebsite = await db.query.websites.findFirst({
-        where: eq(websites.url, url),
-      })
+      // Zamiast bazy danych, sprawdź tylko w pamięci
+      const existingSitemap = inMemoryDb.sitemaps[url]
 
-      // Jeśli istnieje i był aktualizowany w ciągu ostatniego miesiąca, użyj zapisanych danych
-      if (existingWebsite && existingWebsite.lastmod) {
-        const lastModDate = new Date(existingWebsite.lastmod)
+      if (existingSitemap && existingSitemap.lastmod) {
+        const lastModDate = new Date(existingSitemap.lastmod)
         const oneMonthAgo = new Date()
         oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1)
 
         if (lastModDate > oneMonthAgo) {
-          console.log(`Używam zapisanego sitemap dla ${url} z bazy danych`)
-
-          // Pobierz wszystkie podstrony z bazy
-          const subpages = await db.query.websiteSubpages.findMany({
-            where: eq(websiteSubpages.website_id, existingWebsite.id),
-          })
-
-          const sitemapFromDb: SitemapEntry = {
-            id: existingWebsite.id,
-            url,
-            status: 'completed',
-            subpages: subpages.map((s) => s.url),
-            progress: 100,
-            lastmod: existingWebsite.lastmod.toISOString(),
-          }
-
-          inMemoryDb.sitemaps[url] = sitemapFromDb
-          return sitemapFromDb
+          console.log(`Używam zapisanego sitemap dla ${url} z pamięci`)
+          return existingSitemap
         }
       }
 
       // W przeciwnym przypadku utwórz nowy sitemap
       const sitemap: SitemapEntry = {
+        id: Math.floor(Math.random() * 1000), // Fake ID
         url,
         status: 'pending',
         subpages: [],
         progress: 0,
       }
       inMemoryDb.sitemaps[url] = sitemap
-
       return sitemap
     } catch (error) {
-      console.error('Database error in initSitemap:', error)
-      // Fallback do pamięci, gdy baza jest niedostępna
+      console.error('Error in initSitemap:', error)
+      // Fallback do pamięci
       const sitemap: SitemapEntry = {
         url,
         status: 'pending',
@@ -291,59 +264,15 @@ export const docGenService = {
       // Jeśli podstrona już istnieje, nie dodawaj ponownie
       if (sitemap.subpages.includes(subpage)) return
 
-      // Dodaj do lokalnej pamięci
+      // Dodaj tylko do lokalnej pamięci
       sitemap.subpages.push(subpage)
 
-      // Sprawdź czy mamy już website_id dla tego URL
+      // Ustaw ID jeśli nie jest ustawione
       if (!sitemap.id) {
-        // Znajdź lub utwórz wpis w tabeli websites
-        const existingWebsite = await db.query.websites.findFirst({
-          where: eq(websites.url, url),
-        })
-
-        if (existingWebsite) {
-          sitemap.id = existingWebsite.id
-        } else {
-          const currentDate = new Date()
-          const [newWebsite] = await db
-            .insert(websites)
-            .values({
-              url,
-              lastmod: currentDate,
-              changefreq: 'weekly',
-              priority: '0.7',
-            })
-            .returning({ id: websites.id })
-
-          if (newWebsite && newWebsite.id) {
-            sitemap.id = newWebsite.id
-          }
-        }
-      }
-
-      // Jeśli mamy website_id, dodaj podstronę do bazy
-      if (sitemap.id) {
-        // Sprawdź czy podstrona już istnieje w bazie
-        const existingSubpage = await db.query.websiteSubpages.findFirst({
-          where: and(
-            eq(websiteSubpages.website_id, sitemap.id),
-            eq(websiteSubpages.url, subpage)
-          ),
-        })
-
-        if (!existingSubpage) {
-          // Dodaj nową podstronę do bazy
-          await db.insert(websiteSubpages).values({
-            website_id: sitemap.id,
-            url: subpage,
-            changefreq: 'weekly',
-            priority: '0.7',
-          })
-        }
+        sitemap.id = Math.floor(Math.random() * 1000) // Fake ID
       }
     } catch (error) {
-      console.error('Database error in addSubpageToSitemap:', error)
-      // Kontynuuj pracę w pamięci w przypadku błędu bazy danych
+      console.error('Error in addSubpageToSitemap:', error)
     }
   },
 
@@ -535,23 +464,13 @@ Wygenerowano: ${new Date().toLocaleString()}
       const sitemap = inMemoryDb.sitemaps[url]
       if (!sitemap) return
 
-      // Aktualizacja statusu w pamięci
+      // Aktualizacja statusu tylko w pamięci
       sitemap.status = 'completed'
       sitemap.progress = 100
-
-      // Aktualizacja lastmod w bazie danych
-      if (sitemap.id) {
-        await db
-          .update(websites)
-          .set({
-            lastmod: new Date(),
-            updatedAt: new Date(),
-          })
-          .where(eq(websites.id, sitemap.id))
-      }
+      sitemap.lastmod = new Date().toISOString()
     } catch (error) {
-      console.error('Database error in completeSitemap:', error)
-      // Kontynuuj pracę w pamięci w przypadku błędu bazy danych
+      console.error('Error in completeSitemap:', error)
+      // Aktualizacja tylko w pamięci
       const sitemap = inMemoryDb.sitemaps[url]
       if (sitemap) {
         sitemap.status = 'completed'
@@ -574,14 +493,8 @@ Phasellus euismod, purus eget tristique tincidunt, sapien nunc pharetra nulla, e
           doc.htmlContent = (doc.htmlContent || '') + html
         }
       }
-
-      // Aktualizuj doc_url w tabeli websites po zakończeniu generowania dokumentacji
-      const sitemap = inMemoryDb.sitemaps[url]
-      if (sitemap && sitemap.id) {
-        // Nie aktualizujemy doc_url tutaj, tylko przy zakończeniu generowania dokumentacji
-      }
     } catch (error) {
-      console.error('Database error in updateDocContent:', error)
+      console.error('Error in updateDocContent:', error)
     }
   },
 
@@ -593,19 +506,13 @@ Phasellus euismod, purus eget tristique tincidunt, sapien nunc pharetra nulla, e
         doc.status = 'completed'
       }
 
-      // Aktualizuj doc_url w tabeli websites
+      // Aktualizuj tylko w pamięci
       const sitemap = inMemoryDb.sitemaps[url]
-      if (sitemap && sitemap.id) {
-        await db
-          .update(websites)
-          .set({
-            doc_url: `/api/doc-gen/doc/${encodeURIComponent(url)}`,
-            updatedAt: new Date(),
-          })
-          .where(eq(websites.id, sitemap.id))
+      if (sitemap) {
+        sitemap.lastmod = new Date().toISOString()
       }
     } catch (error) {
-      console.error('Database error in completeDoc:', error)
+      console.error('Error in completeDoc:', error)
     }
   },
 }
