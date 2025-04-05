@@ -17,10 +17,9 @@ type SitemapModalProps = {
   };
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: () => void;
 }
 
-export function SitemapModal({ data, isOpen, onClose, onConfirm }: SitemapModalProps) {
+export function SitemapModal({ data, isOpen, onClose }: SitemapModalProps) {
   // Funkcja do formatowania sitemapy w bardziej czytelny sposób
   const formatSitemap = (data: SitemapModalProps['data']): string => {
     if (!data || !data.url || !data.subpages || data.subpages.length === 0) {
@@ -45,7 +44,6 @@ export function SitemapModal({ data, isOpen, onClose, onConfirm }: SitemapModalP
           <DialogDescription>
             Poniżej znajduje się wygenerowany sitemap dla strony {data?.url}. 
             Znaleziono {data?.subpages?.length || 0} stron.
-            Czy chcesz kontynuować i wygenerować dokumentację na podstawie znalezionych stron?
           </DialogDescription>
         </DialogHeader>
         
@@ -56,11 +54,8 @@ export function SitemapModal({ data, isOpen, onClose, onConfirm }: SitemapModalP
         </div>
         
         <DialogFooter className="flex justify-between sm:justify-between">
-          <Button variant="outline" onClick={onClose}>
-            Anuluj
-          </Button>
-          <Button onClick={onConfirm}>
-            Generuj dokumentację
+          <Button onClick={onClose}>
+            Zamknij
           </Button>
         </DialogFooter>
       </DialogContent>

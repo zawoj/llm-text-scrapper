@@ -80,17 +80,15 @@ app.get('/doc-gen/sitemap-progress/:url', async (c) => {
       
       const sitemap = docGenService.getSitemap(url);
       
-      // Generowanie XML sitemap i zapisanie do pliku
-      const sitemapXml = docGenService.generateSitemapXml(url);
-      const sitemapFileName = await docGenService.saveHtmlToFile(`${url}_sitemap`, sitemapXml);
+      // Nie generujemy już pliku sitemap XML
       
       const finalUpdate = {
         event: 'complete',
         data: {
           progress: 100,
           message: 'Generowanie sitemap zakończone!',
-          subpages: sitemap?.subpages || [],
-          sitemapFileUrl: `/api/doc-gen/html-file/${sitemapFileName}`
+          subpages: sitemap?.subpages || []
+          // Usunięte sitemapFileUrl, ponieważ nie jest już potrzebne
         }
       };
       

@@ -6,30 +6,24 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Input } from '@/components/elements/input'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useSitemapGenMutation, useDocGenMutation } from '@/hooks/doc-gen/query'
-import { sitemapGeneratorInputSchema, docGenInputSchema } from '@/hooks/doc-gen/schema'
+import { useSitemapGenMutation } from '@/hooks/doc-gen/query'
+import { sitemapGeneratorInputSchema } from '@/hooks/doc-gen/schema'
 import { z } from 'zod'
 import { ProgressIndicator } from './ProgressIndicator'
 import { SitemapModal } from './SitemapModal'
-import { DownloadButton } from './DownloadButton'
+import { GenerateDocButton } from './GenerateDocButton'
 
-type UrlFormProps = {
-  type: 'sitemap' | 'doc'
-}
-
-export function UrlForm({ type }: UrlFormProps) {
+export function UrlForm() {
   const [showModal, setShowModal] = useState(false)
   const [progressMessages, setProgressMessages] = useState<string[]>([])
   const [progressValue, setProgressValue] = useState<number | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
   const [currentUrl, setCurrentUrl] = useState<string | null>(null)
   const [foundSubpages, setFoundSubpages] = useState<string[]>([])
-  const [documentationUrl, setDocumentationUrl] = useState<string | null>(null)
-  const [htmlFileUrl, setHtmlFileUrl] = useState<string | null>(null)
-  const [sitemapFileUrl, setSitemapFileUrl] = useState<string | null>(null)
+  const [sitemapCompleted, setSitemapCompleted] = useState(false)
 
-  // Wybierz odpowiedni schemat w zależności od typu
-  const formSchema = type === 'sitemap' ? sitemapGeneratorInputSchema : docGenInputSchema
+  // Używamy tylko schematu dla sitemap
+  const formSchema = sitemapGeneratorInputSchema
   type FormData = z.infer<typeof formSchema>
 
   const form = useForm<FormData>({
@@ -49,7 +43,7 @@ export function UrlForm({ type }: UrlFormProps) {
         setProgressValue(parsedData.data.progress);
         setProgressMessages(prev => [...prev, parsedData.data.message]);
         
-        // Dla sitemap zapisujemy znalezione podstrony
+        // Zapisujemy znalezione podstrony
         if (parsedData.data.subpages) {
           setFoundSubpages(parsedData.data.subpages);
         }
@@ -65,17 +59,8 @@ export function UrlForm({ type }: UrlFormProps) {
           setShowModal(true);
         }
         
-        if (parsedData.data.documentationUrl) {
-          setDocumentationUrl(parsedData.data.documentationUrl);
-        }
-
-        if (parsedData.data.htmlFileUrl) {
-          setHtmlFileUrl(parsedData.data.htmlFileUrl);
-        }
-
-        if (parsedData.data.sitemapFileUrl) {
-          setSitemapFileUrl(parsedData.data.sitemapFileUrl);
-        }
+        // Oznacz, że generowanie sitemap zostało zakończone
+        setSitemapCompleted(true);
       }
       else if (parsedData.event === 'error') {
         // Obsługa błędu
@@ -88,16 +73,14 @@ export function UrlForm({ type }: UrlFormProps) {
   };
 
   // Funkcja do rozpoczęcia streamowania danych
-  const startStreaming = (url: string, streamType: 'sitemap' | 'doc') => {
+  const startStreaming = (url: string) => {
     setIsStreaming(true);
     setProgressValue(null);
-    setProgressMessages([`Inicjalizacja ${streamType === 'sitemap' ? 'generowania sitemap' : 'generowania dokumentacji'}...`]);
+    setProgressMessages([`Inicjalizacja generowania sitemap...`]);
     
-    // Tworzenie EventSource dla odpowiedniego endpointu
+    // Tworzenie EventSource dla endpointu sitemap-progress
     const encodedUrl = encodeURIComponent(url);
-    const endpoint = streamType === 'sitemap' 
-      ? `/api/doc-gen/sitemap-progress/${encodedUrl}`
-      : `/api/doc-gen/doc-progress/${encodedUrl}`;
+    const endpoint = `/api/doc-gen/sitemap-progress/${encodedUrl}`;
     
     console.log(`Rozpoczęcie streamowania z ${endpoint}`);
     const eventSource = new EventSource(endpoint);
@@ -122,15 +105,15 @@ export function UrlForm({ type }: UrlFormProps) {
     let cleanup: (() => void) | undefined;
     
     if (isStreaming && currentUrl) {
-      cleanup = startStreaming(currentUrl, type);
+      cleanup = startStreaming(currentUrl);
     }
     
     return () => {
       if (cleanup) cleanup();
     };
-  }, [isStreaming, currentUrl, type]);
+  }, [isStreaming, currentUrl]);
 
-  // Hooki mutacji do inicjowania procesów
+  // Hook mutacji do generowania sitemap
   const sitemapMutation = useSitemapGenMutation({
     onSuccess: (data) => {
       setCurrentUrl(data.data.url);
@@ -144,39 +127,12 @@ export function UrlForm({ type }: UrlFormProps) {
     },
   });
 
-  const docMutation = useDocGenMutation({
-    onSuccess: (data) => {
-      setCurrentUrl(data.data.url);
-      // Rozpoczęcie streamowania po otrzymaniu potwierdzenia z serwera
-      setIsStreaming(true);
-    },
-    onError: (error) => {
-      alert(error.message);
-      setProgressMessages([]);
-      setProgressValue(null);
-    },
-  });
-
-  const mutation = type === 'sitemap' ? sitemapMutation : docMutation;
-  const isLoading = mutation.isPending || isStreaming;
+  const isLoading = sitemapMutation.isPending || isStreaming;
 
   const onSubmit = (data: FormData) => {
-    setDocumentationUrl(null);
-    setHtmlFileUrl(null);
-    setSitemapFileUrl(null);
     setFoundSubpages([]);
-    mutation.mutate(data);
-  };
-
-  // Obsługa potwierdzenia z modalu sitemap
-  const handleSitemapConfirm = () => {
-    setShowModal(false);
-    
-    // Jeśli zaakceptowano sitemap, automatycznie rozpoczynamy generowanie dokumentacji
-    if (currentUrl) {
-      setProgressMessages([`Rozpoczęcie generowania dokumentacji dla ${currentUrl}...`]);
-      docMutation.mutate({ url: currentUrl });
-    }
+    setSitemapCompleted(false);
+    sitemapMutation.mutate(data);
   };
 
   return (
@@ -194,7 +150,7 @@ export function UrlForm({ type }: UrlFormProps) {
                     <Input placeholder="https://example.com" {...field} />
                   </FormControl>
                   <Button type="submit" disabled={isLoading}>
-                    {isLoading ? 'Generowanie...' : type === 'sitemap' ? 'Generuj sitemap' : 'Generuj dokumentację'}
+                    {isLoading ? 'Generowanie...' : 'Generuj sitemap'}
                   </Button>
                 </div>
                 <FormMessage />
@@ -212,41 +168,17 @@ export function UrlForm({ type }: UrlFormProps) {
         />
       )}
 
-      {/* Przycisk pobierania dokumentacji (widoczny tylko po zakończeniu generowania dokumentacji) */}
-      {documentationUrl && progressValue === 100 && (
-        <div className="space-y-2">
-          <DownloadButton 
-            documentationUrl={documentationUrl} 
-            type="doc"
-          />
-          {htmlFileUrl && (
-            <DownloadButton 
-              documentationUrl={htmlFileUrl} 
-              type="doc"
-              customLabel="Pobierz HTML (.txt)"
-            />
-          )}
-        </div>
+      {/* Przycisk generowania dokumentacji (widoczny tylko po zakończeniu generowania sitemap) */}
+      {sitemapCompleted && !isLoading && progressValue === 100 && (
+        <GenerateDocButton url={currentUrl} />
       )}
 
-      {/* Przycisk pobierania sitemap XML (widoczny tylko po zakończeniu generowania sitemap) */}
-      {sitemapFileUrl && progressValue === 100 && type === 'sitemap' && (
-        <div className="space-y-2">
-          <DownloadButton 
-            documentationUrl={sitemapFileUrl} 
-            type="sitemap"
-            customLabel="Pobierz Sitemap (.xml)"
-          />
-        </div>
-      )}
-
-      {/* Modal z sitemap (tylko dla typu sitemap i po zakończeniu generowania) */}
+      {/* Modal z sitemap po zakończeniu generowania */}
       {showModal && foundSubpages.length > 0 && (
         <SitemapModal
           data={{ url: currentUrl, subpages: foundSubpages }}
           isOpen={showModal}
           onClose={() => setShowModal(false)}
-          onConfirm={handleSitemapConfirm}
         />
       )}
     </div>
