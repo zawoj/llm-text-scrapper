@@ -1,45 +1,7 @@
-// Definicje typów i baza danych w pamięci
-type SitemapEntry = {
-  id?: number
-  url: string
-  status: 'pending' | 'completed'
-  subpages: string[]
-  progress: number
-  lastmod?: string
-}
+import { inMemoryDb, SitemapEntry, delay, UrlData } from './common'
 
-// Struktura danych dla URLi w sitemap
-interface UrlData {
-  loc: string
-  lastmod: string
-  changefreq: string
-  priority: string
-}
-
-export const inMemoryDb: {
-  sitemaps: Record<string, SitemapEntry>
-  docs: Record<
-    string,
-    {
-      url: string
-      content: string
-      status: 'pending' | 'completed'
-      htmlContent?: string
-    }
-  >
-  files: Record<string, Uint8Array>
-} = {
-  sitemaps: {},
-  docs: {},
-  files: {},
-}
-
-// Pomocnicza funkcja do symulacji opóźnienia
-export const delay = (ms: number) =>
-  new Promise((resolve) => setTimeout(resolve, ms))
-
-// Serwisy dla doc-gen
-export const docGenService = {
+// Funkcje związane z sitemap
+export const sitemapUtils = {
   // Inicjalizacja sitemap
   initSitemap: async (url: string): Promise<SitemapEntry> => {
     try {
@@ -206,7 +168,7 @@ export const docGenService = {
           // Usuń fragmenty URL (#)
           absoluteUrl = absoluteUrl.split('#')[0]
 
-          if (docGenService.shouldCrawl(absoluteUrl, baseUrl, visitedUrls)) {
+          if (sitemapUtils.shouldCrawl(absoluteUrl, baseUrl, visitedUrls)) {
             links.push(absoluteUrl)
           }
           // eslint-disable-next-line no-empty
@@ -299,7 +261,7 @@ export const docGenService = {
         // Dodaj URL do listy danych
         urlsData.push({
           loc: currentUrl,
-          lastmod: await docGenService.getLastModified(currentUrl),
+          lastmod: await sitemapUtils.getLastModified(currentUrl),
           changefreq: 'weekly',
           priority: '0.7',
         })
@@ -309,7 +271,7 @@ export const docGenService = {
       }
 
       // Ekstrakcja nowych linków
-      const newLinks = await docGenService.extractLinks(
+      const newLinks = await sitemapUtils.extractLinks(
         currentUrl,
         baseUrl,
         visitedUrls
@@ -327,81 +289,6 @@ export const docGenService = {
     }
 
     return Array.from(visitedUrls)
-  },
-
-  // Inicjalizacja dokumentacji
-  initDoc: (url: string) => {
-    const doc = {
-      url,
-      content: '',
-      htmlContent: '',
-      status: 'pending' as const,
-    }
-    inMemoryDb.docs[url] = doc
-    return doc
-  },
-
-  // Pobieranie dokumentacji
-  getDoc: (url: string) => {
-    return inMemoryDb.docs[url] || null
-  },
-
-  // Fetch HTML content for a given URL
-  fetchHtmlContent: async (url: string): Promise<string> => {
-    try {
-      // Using native fetch API instead of node-fetch
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 15000) // 15 sekund timeout
-
-      const response = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; DocGenerator/1.0)',
-        },
-      })
-
-      clearTimeout(timeoutId)
-
-      if (!response.ok) {
-        throw new Error(
-          `Failed to fetch ${url}: ${response.status} ${response.statusText}`
-        )
-      }
-      return await response.text()
-    } catch (error) {
-      console.error(`Error fetching HTML from ${url}:`, error)
-      return `<!-- Error fetching content for ${url} -->`
-    }
-  },
-
-  // Fetch HTML content for all subpages
-  fetchAllSubpagesHtml: async (baseUrl: string): Promise<string> => {
-    const sitemap = inMemoryDb.sitemaps[baseUrl]
-    if (!sitemap) return ''
-
-    let allHtml = ''
-
-    for (const subpage of sitemap.subpages) {
-      allHtml += `\n\n<!-- START OF PAGE: ${subpage} -->\n`
-      const html = await docGenService.fetchHtmlContent(subpage)
-      allHtml += html
-      allHtml += `\n<!-- END OF PAGE: ${subpage} -->\n`
-    }
-
-    return allHtml
-  },
-
-  // Save HTML content to a file and store in memory
-  saveHtmlToFile: async (url: string, htmlContent: string): Promise<string> => {
-    // Using Web Crypto API's randomUUID which is available in Edge Runtime
-    const fileId = crypto.randomUUID()
-    const fileName = `${encodeURIComponent(url.replace(/[^a-zA-Z0-9]/g, '_'))}_${fileId}.txt`
-
-    // Store content in memory using TextEncoder for Edge compatibility
-    const encoder = new TextEncoder()
-    inMemoryDb.files[fileName] = encoder.encode(htmlContent)
-
-    return fileName
   },
 
   // Generate sitemap XML content
@@ -423,33 +310,6 @@ export const docGenService = {
 
     xmlContent += '</urlset>'
     return xmlContent
-  },
-
-  // Get file content by name
-  getFileContent: (fileName: string): Uint8Array | null => {
-    return inMemoryDb.files[fileName] || null
-  },
-
-  // Generowanie pełnej dokumentacji
-  generateFullDoc: (url: string): string => {
-    const sitemap = inMemoryDb.sitemaps[url]
-    const doc = inMemoryDb.docs[url]
-
-    if (!sitemap || !doc) return ''
-
-    return `# Dokumentacja dla ${url}
-
-Wygenerowano automatycznie.
-
-## Struktura strony
-
-${sitemap.subpages.map((page) => `- ${page}`).join('\n')}
-
-${doc.content}
-
----
-Wygenerowano: ${new Date().toLocaleString()}
-`
   },
 
   // Sprawdzenie czy sitemap istnieje i jest ukończony
@@ -476,43 +336,6 @@ Wygenerowano: ${new Date().toLocaleString()}
         sitemap.status = 'completed'
         sitemap.progress = 100
       }
-    }
-  },
-
-  // Aktualizacja zawartości dokumentacji
-  updateDocContent: async (url: string, subpage: string, html?: string) => {
-    try {
-      const doc = inMemoryDb.docs[url]
-      if (doc) {
-        doc.content += `\n\n## Dokumentacja dla ${subpage}\n\n`
-        doc.content += `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla facilisi. 
-Phasellus euismod, purus eget tristique tincidunt, sapien nunc pharetra nulla, eget rhoncus nisl diam eget nisi.`
-
-        // If HTML content is provided, append it to htmlContent
-        if (html) {
-          doc.htmlContent = (doc.htmlContent || '') + html
-        }
-      }
-    } catch (error) {
-      console.error('Error in updateDocContent:', error)
-    }
-  },
-
-  // Zakończenie generowania dokumentacji
-  completeDoc: async (url: string) => {
-    try {
-      const doc = inMemoryDb.docs[url]
-      if (doc) {
-        doc.status = 'completed'
-      }
-
-      // Aktualizuj tylko w pamięci
-      const sitemap = inMemoryDb.sitemaps[url]
-      if (sitemap) {
-        sitemap.lastmod = new Date().toISOString()
-      }
-    } catch (error) {
-      console.error('Error in completeDoc:', error)
     }
   },
 }

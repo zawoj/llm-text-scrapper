@@ -3,7 +3,7 @@ import { handle } from 'hono/vercel'
 import { zValidator } from '@hono/zod-validator'
 import { userFormSchema } from '@/hooks/users/schema'
 
-import { docGenService, delay } from './doc-gen'
+import { docGenService, delay } from '../../../services/doc-gen'
 import {
   sitemapGeneratorInputSchema,
   docGenInputSchema,
