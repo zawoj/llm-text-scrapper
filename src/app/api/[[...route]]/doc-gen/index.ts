@@ -11,6 +11,14 @@ type SitemapEntry = {
   progress: number
 }
 
+// Struktura danych dla URLi w sitemap
+interface UrlData {
+  loc: string
+  lastmod: string
+  changefreq: string
+  priority: string
+}
+
 export const inMemoryDb: {
   sitemaps: Record<string, SitemapEntry>
   docs: Record<
@@ -52,24 +60,165 @@ export const docGenService = {
     return inMemoryDb.sitemaps[url] || null
   },
 
-  // Symulacja odkrywania podstron
-  generateSitemapPaths: (baseUrl: string): string[] => {
-    const paths = [
-      '',
-      '/about',
-      '/contact',
-      '/products',
-      '/products/category-1',
-      '/products/category-2',
-      '/blog',
-      '/blog/post-1',
-      '/blog/post-2',
-      '/docs',
-      '/docs/getting-started',
-      '/docs/api-reference',
-    ]
+  // Sprawdzenie czy powinien być przetwarzany URL
+  shouldCrawl: (url: string, baseUrl: string, visitedUrls: Set<string>): boolean => {
+    try {
+      const parsedUrl = new URL(url)
+      const baseHostname = new URL(baseUrl).hostname
 
-    return paths.map((path) => `${baseUrl}${path}`)
+      // Sprawdź czy URL jest z tej samej domeny
+      if (parsedUrl.hostname !== baseHostname) {
+        return false
+      }
+
+      // Sprawdź czy URL już odwiedziliśmy
+      if (visitedUrls.has(url)) {
+        return false
+      }
+
+      // Sprawdź rozszerzenie pliku - pomijamy pliki statyczne
+      const pathLower = parsedUrl.pathname.toLowerCase()
+      const excludedExtensions = [
+        '.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp',
+        '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+        '.zip', '.rar', '.tar', '.gz', '.7z',
+        '.mp3', '.mp4', '.avi', '.mov', '.webm',
+        '.css', '.js', '.json', '.xml', '.rss', '.atom'
+      ]
+      if (excludedExtensions.some(ext => pathLower.endsWith(ext))) {
+        return false
+      }
+
+      // Wykluczenie ścieżek administracyjnych
+      const excludedPaths = ['/wp-admin', '/wp-login', '/admin', '/login', '/signin', '/cart', '/checkout']
+      if (excludedPaths.some(path => parsedUrl.pathname.includes(path))) {
+        return false
+      }
+
+      return true
+    } catch (e) {
+      console.error(`Błąd podczas przetwarzania URL: ${url}`, e)
+      return false
+    }
+  },
+
+  // Wyciąganie linków ze strony HTML
+  extractLinks: async (url: string, baseUrl: string, visitedUrls: Set<string>): Promise<string[]> => {
+    try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 sekund timeout
+      
+      const response = await fetch(url, { 
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; SitemapGenerator/1.0)'
+        }
+      })
+      
+      clearTimeout(timeoutId)
+      
+      if (!response.ok) {
+        return []
+      }
+
+      const html = await response.text()
+      const links: string[] = []
+      
+      // Proste parsowanie linków za pomocą wyrażeń regularnych
+      // Nie jest to idealne rozwiązanie, ale działa w środowisku Edge Runtime
+      const hrefRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>/gi
+      let match
+      
+      while ((match = hrefRegex.exec(html)) !== null) {
+        try {
+          const href = match[1]
+          if (!href) continue
+          
+          // Przekształć względny URL do absolutnego
+          let absoluteUrl = new URL(href, url).href
+          
+          // Usuń fragmenty URL (#)
+          absoluteUrl = absoluteUrl.split('#')[0]
+          
+          if (docGenService.shouldCrawl(absoluteUrl, baseUrl, visitedUrls)) {
+            links.push(absoluteUrl)
+          }
+        } catch (_) {
+          // Ignoruj niepoprawne URLe
+        }
+      }
+
+      return [...new Set(links)] // Usuń duplikaty
+    } catch (error) {
+      console.error(`Błąd podczas przetwarzania ${url}:`, error)
+      return []
+    }
+  },
+  
+  // Pobranie daty ostatniej modyfikacji
+  getLastModified: async (url: string): Promise<string> => {
+    try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 5000) // 5 sekund timeout
+      
+      const response = await fetch(url, { 
+        method: 'HEAD',
+        signal: controller.signal
+      })
+      
+      clearTimeout(timeoutId)
+      
+      const lastModified = response.headers.get('last-modified')
+      if (lastModified) {
+        return new Date(lastModified).toISOString().split('T')[0]
+      }
+    } catch (_) {
+      // Cicha obsługa błędów
+    }
+    return new Date().toISOString().split('T')[0]
+  },
+
+  // Generowanie rzeczywistych ścieżek sitemap przez crawlowanie
+  generateSitemapPaths: async (baseUrl: string, maxUrls: number = 100, updateProgress: (progress: number, url: string) => void): Promise<string[]> => {
+    const visitedUrls = new Set<string>()
+    const urlsToVisit = [baseUrl]
+    const urlsData: UrlData[] = []
+    
+    while (urlsToVisit.length > 0 && visitedUrls.size < maxUrls) {
+      const currentUrl = urlsToVisit.shift()
+      if (!currentUrl || visitedUrls.has(currentUrl)) {
+        continue
+      }
+      
+      visitedUrls.add(currentUrl)
+      
+      // Aktualizuj postęp
+      const progress = Math.round((visitedUrls.size / maxUrls) * 100)
+      updateProgress(progress, currentUrl)
+      
+      // Dodaj URL do listy danych
+      urlsData.push({
+        loc: currentUrl,
+        lastmod: await docGenService.getLastModified(currentUrl),
+        changefreq: 'weekly',
+        priority: '0.7'
+      })
+      
+      // Ekstrakcja nowych linków
+      const newLinks = await docGenService.extractLinks(currentUrl, baseUrl, visitedUrls)
+      
+      // Dodaj nowe linki do kolejki
+      for (const link of newLinks) {
+        if (!visitedUrls.has(link) && !urlsToVisit.includes(link)) {
+          urlsToVisit.push(link)
+        }
+      }
+      
+      // Małe opóźnienie aby nie obciążać serwera
+      await delay(500)
+    }
+    
+    return Array.from(visitedUrls)
   },
 
   // Inicjalizacja dokumentacji
@@ -93,7 +242,18 @@ export const docGenService = {
   fetchHtmlContent: async (url: string): Promise<string> => {
     try {
       // Using native fetch API instead of node-fetch
-      const response = await fetch(url)
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 15000) // 15 sekund timeout
+      
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; DocGenerator/1.0)'
+        }
+      })
+      
+      clearTimeout(timeoutId)
+      
       if (!response.ok) {
         throw new Error(
           `Failed to fetch ${url}: ${response.status} ${response.statusText}`
@@ -134,6 +294,26 @@ export const docGenService = {
     inMemoryDb.files[fileName] = encoder.encode(htmlContent)
 
     return fileName
+  },
+
+  // Generate sitemap XML content
+  generateSitemapXml: (url: string): string => {
+    const sitemap = inMemoryDb.sitemaps[url]
+    if (!sitemap) return ''
+    
+    let xmlContent = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    xmlContent += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    
+    for (const subpage of sitemap.subpages) {
+      xmlContent += '  <url>\n'
+      xmlContent += `    <loc>${subpage}</loc>\n`
+      xmlContent += '    <changefreq>weekly</changefreq>\n'
+      xmlContent += '    <priority>0.7</priority>\n'
+      xmlContent += '  </url>\n'
+    }
+    
+    xmlContent += '</urlset>'
+    return xmlContent
   },
 
   // Get file content by name

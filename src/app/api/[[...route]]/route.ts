@@ -50,50 +50,65 @@ app.get('/doc-gen/sitemap-progress/:url', async (c) => {
     docGenService.initSitemap(url);
   }
   
-  // Funkcja aktualizująca postęp
-  const updateProgress = async () => {
-    const paths = docGenService.generateSitemapPaths(url);
+  // Funkcja do aktualizacji postępu i wysyłania informacji do klienta
+  const updateProgressAndSendUpdate = async (progress: number, subpage: string) => {
+    // Aktualizacja stanu
+    docGenService.updateSitemapProgress(url, progress, subpage);
     
-    // Symulacja stopniowego odkrywania stron
-    for (let i = 0; i < paths.length; i++) {
-      const progress = Math.round((i / paths.length) * 100);
-      const subpage = paths[i];
-      
-      // Aktualizacja stanu
-      docGenService.updateSitemapProgress(url, progress, subpage);
-      
-      // Wysłanie aktualizacji do klienta
-      const sitemap = docGenService.getSitemap(url);
-      const update = {
-        event: 'update',
-        data: {
-          progress,
-          message: `Znaleziono: ${subpage}`,
-          subpages: sitemap?.subpages || []
-        }
-      };
-      
-      await writer.write(encoder.encode(`data: ${JSON.stringify(update)}\n\n`));
-      
-      // Symulacja czasu potrzebnego na odkrycie strony
-      await delay(1000);
-    }
-    
-    // Zakończenie generowania sitemap
-    docGenService.completeSitemap(url);
-    
+    // Wysłanie aktualizacji do klienta
     const sitemap = docGenService.getSitemap(url);
-    const finalUpdate = {
-      event: 'complete',
+    const update = {
+      event: 'update',
       data: {
-        progress: 100,
-        message: 'Generowanie sitemap zakończone!',
+        progress,
+        message: `Znaleziono: ${subpage}`,
         subpages: sitemap?.subpages || []
       }
     };
     
-    await writer.write(encoder.encode(`data: ${JSON.stringify(finalUpdate)}\n\n`));
-    await writer.close();
+    await writer.write(encoder.encode(`data: ${JSON.stringify(update)}\n\n`));
+  };
+  
+  // Funkcja aktualizująca postęp
+  const updateProgress = async () => {
+    try {
+      // Faktyczne crawlowanie strony z ograniczeniem do 50 URL-i
+      await docGenService.generateSitemapPaths(url, 50, updateProgressAndSendUpdate);
+      
+      // Zakończenie generowania sitemap
+      docGenService.completeSitemap(url);
+      
+      const sitemap = docGenService.getSitemap(url);
+      
+      // Generowanie XML sitemap i zapisanie do pliku
+      const sitemapXml = docGenService.generateSitemapXml(url);
+      const sitemapFileName = await docGenService.saveHtmlToFile(`${url}_sitemap`, sitemapXml);
+      
+      const finalUpdate = {
+        event: 'complete',
+        data: {
+          progress: 100,
+          message: 'Generowanie sitemap zakończone!',
+          subpages: sitemap?.subpages || [],
+          sitemapFileUrl: `/api/doc-gen/html-file/${sitemapFileName}`
+        }
+      };
+      
+      await writer.write(encoder.encode(`data: ${JSON.stringify(finalUpdate)}\n\n`));
+      await writer.close();
+    } catch (error) {
+      console.error('Błąd podczas generowania sitemap:', error);
+      
+      const errorUpdate = {
+        event: 'error',
+        data: {
+          message: 'Wystąpił błąd podczas generowania sitemap'
+        }
+      };
+      
+      await writer.write(encoder.encode(`data: ${JSON.stringify(errorUpdate)}\n\n`));
+      await writer.close();
+    }
   };
   
   // Uruchomienie asynchronicznego aktualizowania postępu

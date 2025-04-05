@@ -26,6 +26,7 @@ export function UrlForm({ type }: UrlFormProps) {
   const [foundSubpages, setFoundSubpages] = useState<string[]>([])
   const [documentationUrl, setDocumentationUrl] = useState<string | null>(null)
   const [htmlFileUrl, setHtmlFileUrl] = useState<string | null>(null)
+  const [sitemapFileUrl, setSitemapFileUrl] = useState<string | null>(null)
 
   // Wybierz odpowiedni schemat w zależności od typu
   const formSchema = type === 'sitemap' ? sitemapGeneratorInputSchema : docGenInputSchema
@@ -71,6 +72,10 @@ export function UrlForm({ type }: UrlFormProps) {
         if (parsedData.data.htmlFileUrl) {
           setHtmlFileUrl(parsedData.data.htmlFileUrl);
         }
+
+        if (parsedData.data.sitemapFileUrl) {
+          setSitemapFileUrl(parsedData.data.sitemapFileUrl);
+        }
       }
       else if (parsedData.event === 'error') {
         // Obsługa błędu
@@ -99,8 +104,8 @@ export function UrlForm({ type }: UrlFormProps) {
     
     eventSource.onmessage = handleSseEvent;
     
-    eventSource.onerror = (error) => {
-      console.error('Błąd SSE:', error);
+    eventSource.onerror = (event: Event) => {
+      console.error('Błąd SSE:', event);
       setProgressMessages(prev => [...prev, 'Wystąpił błąd podczas komunikacji z serwerem']);
       setIsStreaming(false);
       eventSource.close();
@@ -158,6 +163,7 @@ export function UrlForm({ type }: UrlFormProps) {
   const onSubmit = (data: FormData) => {
     setDocumentationUrl(null);
     setHtmlFileUrl(null);
+    setSitemapFileUrl(null);
     setFoundSubpages([]);
     mutation.mutate(data);
   };
@@ -220,6 +226,17 @@ export function UrlForm({ type }: UrlFormProps) {
               customLabel="Pobierz HTML (.txt)"
             />
           )}
+        </div>
+      )}
+
+      {/* Przycisk pobierania sitemap XML (widoczny tylko po zakończeniu generowania sitemap) */}
+      {sitemapFileUrl && progressValue === 100 && type === 'sitemap' && (
+        <div className="space-y-2">
+          <DownloadButton 
+            documentationUrl={sitemapFileUrl} 
+            type="sitemap"
+            customLabel="Pobierz Sitemap (.xml)"
+          />
         </div>
       )}
 
