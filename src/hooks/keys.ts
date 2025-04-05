@@ -13,4 +13,9 @@ export const queryKeys = {
     all: ['users'] as const,
     create: () => [...queryKeys.users.all, 'create'] as const,
   },
+  docGen: {
+    all: ['docGen'] as const,
+    sitemapGen: () => [...queryKeys.docGen.all, 'sitemapGen'] as const,
+    docGen: () => [...queryKeys.docGen.all, 'docGen'] as const,
+  },
 } as const

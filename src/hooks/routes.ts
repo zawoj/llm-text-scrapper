@@ -6,6 +6,10 @@ export const apiRoutes = {
   users: {
     create: '/api/user',
   },
+  docGen: {
+    sitemapGen: '/api/doc-gen/sitemap-gen',
+    docGen: '/api/doc-gen/doc-gen',
+  },
   // Add other feature routes as needed
   // users: {
   //   base: '/api/users',
