@@ -1,7 +1,7 @@
 import { useMutation } from '@tanstack/react-query'
 import { apiRoutes } from '../routes'
 import { queryKeys } from '../keys'
-import { sitemapGeneratorInputSchema, docGenInputSchema } from './schema'
+import { sitemapGeneratorInputSchema, docGenInputSchema } from '@/db/schema'
 
 // Typy dla sitemap-gen
 type SitemapGenInput = typeof sitemapGeneratorInputSchema._type
@@ -32,7 +32,9 @@ interface DocGenMutationOptions {
 }
 
 // Funkcja do generowania sitemap
-const generateSitemap = async (data: SitemapGenInput): Promise<SitemapGenResponse> => {
+const generateSitemap = async (
+  data: SitemapGenInput
+): Promise<SitemapGenResponse> => {
   const response = await fetch(apiRoutes.docGen.sitemapGen, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -57,7 +59,9 @@ export function useSitemapGenMutation(options?: SitemapGenMutationOptions) {
 }
 
 // Funkcja do generowania dokumentacji
-const generateDocumentation = async (data: DocGenInput): Promise<DocGenResponse> => {
+const generateDocumentation = async (
+  data: DocGenInput
+): Promise<DocGenResponse> => {
   const response = await fetch(apiRoutes.docGen.docGen, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -2,13 +2,18 @@
 // No need to import fetch - using native fetch API available in Edge Runtime
 
 // No need to import crypto - using Web Crypto API available in Edge Runtime
+import { db } from '@/db'
+import { eq, and } from 'drizzle-orm'
+import { websites, websiteSubpages } from '@/hooks/doc-gen/schema'
 
 // Definicje typów i baza danych w pamięci
 type SitemapEntry = {
+  id?: number
   url: string
   status: 'pending' | 'completed'
   subpages: string[]
   progress: number
+  lastmod?: string
 }
 
 // Struktura danych dla URLi w sitemap
@@ -44,15 +49,63 @@ export const delay = (ms: number) =>
 // Serwisy dla doc-gen
 export const docGenService = {
   // Inicjalizacja sitemap
-  initSitemap: (url: string): SitemapEntry => {
-    const sitemap: SitemapEntry = {
-      url,
-      status: 'pending',
-      subpages: [],
-      progress: 0,
+  initSitemap: async (url: string): Promise<SitemapEntry> => {
+    try {
+      // Sprawdź, czy mamy istniejący wpis dla tej strony w bazie
+      const existingWebsite = await db.query.websites.findFirst({
+        where: eq(websites.url, url),
+      })
+
+      // Jeśli istnieje i był aktualizowany w ciągu ostatniego miesiąca, użyj zapisanych danych
+      if (existingWebsite && existingWebsite.lastmod) {
+        const lastModDate = new Date(existingWebsite.lastmod)
+        const oneMonthAgo = new Date()
+        oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1)
+
+        if (lastModDate > oneMonthAgo) {
+          console.log(`Używam zapisanego sitemap dla ${url} z bazy danych`)
+
+          // Pobierz wszystkie podstrony z bazy
+          const subpages = await db.query.websiteSubpages.findMany({
+            where: eq(websiteSubpages.website_id, existingWebsite.id),
+          })
+
+          const sitemapFromDb: SitemapEntry = {
+            id: existingWebsite.id,
+            url,
+            status: 'completed',
+            subpages: subpages.map((s) => s.url),
+            progress: 100,
+            lastmod: existingWebsite.lastmod.toISOString(),
+          }
+
+          inMemoryDb.sitemaps[url] = sitemapFromDb
+          return sitemapFromDb
+        }
+      }
+
+      // W przeciwnym przypadku utwórz nowy sitemap
+      const sitemap: SitemapEntry = {
+        url,
+        status: 'pending',
+        subpages: [],
+        progress: 0,
+      }
+      inMemoryDb.sitemaps[url] = sitemap
+
+      return sitemap
+    } catch (error) {
+      console.error('Database error in initSitemap:', error)
+      // Fallback do pamięci, gdy baza jest niedostępna
+      const sitemap: SitemapEntry = {
+        url,
+        status: 'pending',
+        subpages: [],
+        progress: 0,
+      }
+      inMemoryDb.sitemaps[url] = sitemap
+      return sitemap
     }
-    inMemoryDb.sitemaps[url] = sitemap
-    return sitemap
   },
 
   // Pobieranie sitemap
@@ -61,7 +114,11 @@ export const docGenService = {
   },
 
   // Sprawdzenie czy powinien być przetwarzany URL
-  shouldCrawl: (url: string, baseUrl: string, visitedUrls: Set<string>): boolean => {
+  shouldCrawl: (
+    url: string,
+    baseUrl: string,
+    visitedUrls: Set<string>
+  ): boolean => {
     try {
       const parsedUrl = new URL(url)
       const baseHostname = new URL(baseUrl).hostname
@@ -79,19 +136,51 @@ export const docGenService = {
       // Sprawdź rozszerzenie pliku - pomijamy pliki statyczne
       const pathLower = parsedUrl.pathname.toLowerCase()
       const excludedExtensions = [
-        '.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp',
-        '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
-        '.zip', '.rar', '.tar', '.gz', '.7z',
-        '.mp3', '.mp4', '.avi', '.mov', '.webm',
-        '.css', '.js', '.json', '.xml', '.rss', '.atom'
+        '.jpg',
+        '.jpeg',
+        '.png',
+        '.gif',
+        '.svg',
+        '.webp',
+        '.pdf',
+        '.doc',
+        '.docx',
+        '.xls',
+        '.xlsx',
+        '.ppt',
+        '.pptx',
+        '.zip',
+        '.rar',
+        '.tar',
+        '.gz',
+        '.7z',
+        '.mp3',
+        '.mp4',
+        '.avi',
+        '.mov',
+        '.webm',
+        '.css',
+        '.js',
+        '.json',
+        '.xml',
+        '.rss',
+        '.atom',
       ]
-      if (excludedExtensions.some(ext => pathLower.endsWith(ext))) {
+      if (excludedExtensions.some((ext) => pathLower.endsWith(ext))) {
         return false
       }
 
       // Wykluczenie ścieżek administracyjnych
-      const excludedPaths = ['/wp-admin', '/wp-login', '/admin', '/login', '/signin', '/cart', '/checkout']
-      if (excludedPaths.some(path => parsedUrl.pathname.includes(path))) {
+      const excludedPaths = [
+        '/wp-admin',
+        '/wp-login',
+        '/admin',
+        '/login',
+        '/signin',
+        '/cart',
+        '/checkout',
+      ]
+      if (excludedPaths.some((path) => parsedUrl.pathname.includes(path))) {
         return false
       }
 
@@ -103,47 +192,52 @@ export const docGenService = {
   },
 
   // Wyciąganie linków ze strony HTML
-  extractLinks: async (url: string, baseUrl: string, visitedUrls: Set<string>): Promise<string[]> => {
+  extractLinks: async (
+    url: string,
+    baseUrl: string,
+    visitedUrls: Set<string>
+  ): Promise<string[]> => {
     try {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 sekund timeout
-      
-      const response = await fetch(url, { 
+
+      const response = await fetch(url, {
         signal: controller.signal,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; SitemapGenerator/1.0)'
-        }
+          'User-Agent': 'Mozilla/5.0 (compatible; SitemapGenerator/1.0)',
+        },
       })
-      
+
       clearTimeout(timeoutId)
-      
+
       if (!response.ok) {
         return []
       }
 
       const html = await response.text()
       const links: string[] = []
-      
+
       // Proste parsowanie linków za pomocą wyrażeń regularnych
       // Nie jest to idealne rozwiązanie, ale działa w środowisku Edge Runtime
       const hrefRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>/gi
       let match
-      
+
       while ((match = hrefRegex.exec(html)) !== null) {
         try {
           const href = match[1]
           if (!href) continue
-          
+
           // Przekształć względny URL do absolutnego
           let absoluteUrl = new URL(href, url).href
-          
+
           // Usuń fragmenty URL (#)
           absoluteUrl = absoluteUrl.split('#')[0]
-          
+
           if (docGenService.shouldCrawl(absoluteUrl, baseUrl, visitedUrls)) {
             links.push(absoluteUrl)
           }
-        } catch (_) {
+          // eslint-disable-next-line no-empty
+        } catch {
           // Ignoruj niepoprawne URLe
         }
       }
@@ -154,70 +248,155 @@ export const docGenService = {
       return []
     }
   },
-  
+
   // Pobranie daty ostatniej modyfikacji
   getLastModified: async (url: string): Promise<string> => {
     try {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 5000) // 5 sekund timeout
-      
-      const response = await fetch(url, { 
+
+      const response = await fetch(url, {
         method: 'HEAD',
-        signal: controller.signal
+        signal: controller.signal,
       })
-      
+
       clearTimeout(timeoutId)
-      
+
       const lastModified = response.headers.get('last-modified')
       if (lastModified) {
         return new Date(lastModified).toISOString().split('T')[0]
       }
-    } catch (_) {
+      // eslint-disable-next-line no-empty
+    } catch {
       // Cicha obsługa błędów
     }
     return new Date().toISOString().split('T')[0]
   },
 
+  // Aktualizacja postępu sitemap
+  updateSitemapProgress: (url: string, progress: number, subpage: string) => {
+    const sitemap = inMemoryDb.sitemaps[url]
+    if (sitemap) {
+      sitemap.subpages.push(subpage)
+      sitemap.progress = progress
+    }
+  },
+
+  // Dodaj podstronę do sitemap
+  addSubpageToSitemap: async (url: string, subpage: string) => {
+    try {
+      const sitemap = inMemoryDb.sitemaps[url]
+      if (!sitemap) return
+
+      // Jeśli podstrona już istnieje, nie dodawaj ponownie
+      if (sitemap.subpages.includes(subpage)) return
+
+      // Dodaj do lokalnej pamięci
+      sitemap.subpages.push(subpage)
+
+      // Sprawdź czy mamy już website_id dla tego URL
+      if (!sitemap.id) {
+        // Znajdź lub utwórz wpis w tabeli websites
+        const existingWebsite = await db.query.websites.findFirst({
+          where: eq(websites.url, url),
+        })
+
+        if (existingWebsite) {
+          sitemap.id = existingWebsite.id
+        } else {
+          const currentDate = new Date()
+          const [newWebsite] = await db
+            .insert(websites)
+            .values({
+              url,
+              lastmod: currentDate,
+              changefreq: 'weekly',
+              priority: '0.7',
+            })
+            .returning({ id: websites.id })
+
+          if (newWebsite && newWebsite.id) {
+            sitemap.id = newWebsite.id
+          }
+        }
+      }
+
+      // Jeśli mamy website_id, dodaj podstronę do bazy
+      if (sitemap.id) {
+        // Sprawdź czy podstrona już istnieje w bazie
+        const existingSubpage = await db.query.websiteSubpages.findFirst({
+          where: and(
+            eq(websiteSubpages.website_id, sitemap.id),
+            eq(websiteSubpages.url, subpage)
+          ),
+        })
+
+        if (!existingSubpage) {
+          // Dodaj nową podstronę do bazy
+          await db.insert(websiteSubpages).values({
+            website_id: sitemap.id,
+            url: subpage,
+            changefreq: 'weekly',
+            priority: '0.7',
+          })
+        }
+      }
+    } catch (error) {
+      console.error('Database error in addSubpageToSitemap:', error)
+      // Kontynuuj pracę w pamięci w przypadku błędu bazy danych
+    }
+  },
+
   // Generowanie rzeczywistych ścieżek sitemap przez crawlowanie
-  generateSitemapPaths: async (baseUrl: string, maxUrls: number = 100, updateProgress: (progress: number, url: string) => void): Promise<string[]> => {
+  generateSitemapPaths: async (
+    baseUrl: string,
+    updateProgress: (subpage: string, isNewPage: boolean) => void
+  ): Promise<string[]> => {
     const visitedUrls = new Set<string>()
     const urlsToVisit = [baseUrl]
     const urlsData: UrlData[] = []
-    
-    while (urlsToVisit.length > 0 && visitedUrls.size < maxUrls) {
+
+    while (urlsToVisit.length > 0) {
       const currentUrl = urlsToVisit.shift()
-      if (!currentUrl || visitedUrls.has(currentUrl)) {
-        continue
+      if (!currentUrl) continue
+
+      const isNewPage = !visitedUrls.has(currentUrl)
+      if (isNewPage) {
+        visitedUrls.add(currentUrl)
+
+        // Aktualizuj postęp z nową stroną
+        updateProgress(currentUrl, isNewPage)
+
+        // Dodaj URL do listy danych
+        urlsData.push({
+          loc: currentUrl,
+          lastmod: await docGenService.getLastModified(currentUrl),
+          changefreq: 'weekly',
+          priority: '0.7',
+        })
+      } else {
+        // Jeśli strona już była odwiedzona, tylko aktualizuj UI
+        updateProgress(currentUrl, false)
       }
-      
-      visitedUrls.add(currentUrl)
-      
-      // Aktualizuj postęp
-      const progress = Math.round((visitedUrls.size / maxUrls) * 100)
-      updateProgress(progress, currentUrl)
-      
-      // Dodaj URL do listy danych
-      urlsData.push({
-        loc: currentUrl,
-        lastmod: await docGenService.getLastModified(currentUrl),
-        changefreq: 'weekly',
-        priority: '0.7'
-      })
-      
+
       // Ekstrakcja nowych linków
-      const newLinks = await docGenService.extractLinks(currentUrl, baseUrl, visitedUrls)
-      
+      const newLinks = await docGenService.extractLinks(
+        currentUrl,
+        baseUrl,
+        visitedUrls
+      )
+
       // Dodaj nowe linki do kolejki
       for (const link of newLinks) {
         if (!visitedUrls.has(link) && !urlsToVisit.includes(link)) {
           urlsToVisit.push(link)
         }
       }
-      
+
       // Małe opóźnienie aby nie obciążać serwera
       await delay(500)
     }
-    
+
     return Array.from(visitedUrls)
   },
 
@@ -244,16 +423,16 @@ export const docGenService = {
       // Using native fetch API instead of node-fetch
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 15000) // 15 sekund timeout
-      
+
       const response = await fetch(url, {
         signal: controller.signal,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; DocGenerator/1.0)'
-        }
+          'User-Agent': 'Mozilla/5.0 (compatible; DocGenerator/1.0)',
+        },
       })
-      
+
       clearTimeout(timeoutId)
-      
+
       if (!response.ok) {
         throw new Error(
           `Failed to fetch ${url}: ${response.status} ${response.statusText}`
@@ -300,10 +479,11 @@ export const docGenService = {
   generateSitemapXml: (url: string): string => {
     const sitemap = inMemoryDb.sitemaps[url]
     if (!sitemap) return ''
-    
+
     let xmlContent = '<?xml version="1.0" encoding="UTF-8"?>\n'
-    xmlContent += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-    
+    xmlContent +=
+      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+
     for (const subpage of sitemap.subpages) {
       xmlContent += '  <url>\n'
       xmlContent += `    <loc>${subpage}</loc>\n`
@@ -311,7 +491,7 @@ export const docGenService = {
       xmlContent += '    <priority>0.7</priority>\n'
       xmlContent += '  </url>\n'
     }
-    
+
     xmlContent += '</urlset>'
     return xmlContent
   },
@@ -349,45 +529,83 @@ Wygenerowano: ${new Date().toLocaleString()}
     return !!sitemap && sitemap.status === 'completed'
   },
 
-  // Aktualizacja postępu sitemap
-  updateSitemapProgress: (url: string, progress: number, subpage: string) => {
-    const sitemap = inMemoryDb.sitemaps[url]
-    if (sitemap) {
-      sitemap.subpages.push(subpage)
-      sitemap.progress = progress
-    }
-  },
-
   // Zakończenie generowania sitemap
-  completeSitemap: (url: string) => {
-    const sitemap = inMemoryDb.sitemaps[url]
-    if (sitemap) {
+  completeSitemap: async (url: string) => {
+    try {
+      const sitemap = inMemoryDb.sitemaps[url]
+      if (!sitemap) return
+
+      // Aktualizacja statusu w pamięci
       sitemap.status = 'completed'
       sitemap.progress = 100
-    }
-  },
 
-  // Aktualizacja zawartości dokumentacji
-  updateDocContent: (url: string, subpage: string, html?: string) => {
-    const doc = inMemoryDb.docs[url]
-    if (doc) {
-      doc.content += `\n\n## Dokumentacja dla ${subpage}\n\n`
-      doc.content += `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla facilisi. 
-Phasellus euismod, purus eget tristique tincidunt, sapien nunc pharetra nulla, eget rhoncus nisl diam eget nisi.`
-
-      // If HTML content is provided, append it to htmlContent
-      if (html) {
-        doc.htmlContent =
-          (doc.htmlContent || '') + `\n\n<!-- ${subpage} -->\n${html}`
+      // Aktualizacja lastmod w bazie danych
+      if (sitemap.id) {
+        await db
+          .update(websites)
+          .set({
+            lastmod: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(websites.id, sitemap.id))
+      }
+    } catch (error) {
+      console.error('Database error in completeSitemap:', error)
+      // Kontynuuj pracę w pamięci w przypadku błędu bazy danych
+      const sitemap = inMemoryDb.sitemaps[url]
+      if (sitemap) {
+        sitemap.status = 'completed'
+        sitemap.progress = 100
       }
     }
   },
 
+  // Aktualizacja zawartości dokumentacji
+  updateDocContent: async (url: string, subpage: string, html?: string) => {
+    try {
+      const doc = inMemoryDb.docs[url]
+      if (doc) {
+        doc.content += `\n\n## Dokumentacja dla ${subpage}\n\n`
+        doc.content += `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla facilisi. 
+Phasellus euismod, purus eget tristique tincidunt, sapien nunc pharetra nulla, eget rhoncus nisl diam eget nisi.`
+
+        // If HTML content is provided, append it to htmlContent
+        if (html) {
+          doc.htmlContent = (doc.htmlContent || '') + html
+        }
+      }
+
+      // Aktualizuj doc_url w tabeli websites po zakończeniu generowania dokumentacji
+      const sitemap = inMemoryDb.sitemaps[url]
+      if (sitemap && sitemap.id) {
+        // Nie aktualizujemy doc_url tutaj, tylko przy zakończeniu generowania dokumentacji
+      }
+    } catch (error) {
+      console.error('Database error in updateDocContent:', error)
+    }
+  },
+
   // Zakończenie generowania dokumentacji
-  completeDoc: (url: string) => {
-    const doc = inMemoryDb.docs[url]
-    if (doc) {
-      doc.status = 'completed'
+  completeDoc: async (url: string) => {
+    try {
+      const doc = inMemoryDb.docs[url]
+      if (doc) {
+        doc.status = 'completed'
+      }
+
+      // Aktualizuj doc_url w tabeli websites
+      const sitemap = inMemoryDb.sitemaps[url]
+      if (sitemap && sitemap.id) {
+        await db
+          .update(websites)
+          .set({
+            doc_url: `/api/doc-gen/doc/${encodeURIComponent(url)}`,
+            updatedAt: new Date(),
+          })
+          .where(eq(websites.id, sitemap.id))
+      }
+    } catch (error) {
+      console.error('Database error in completeDoc:', error)
     }
   },
 }
