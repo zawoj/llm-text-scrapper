@@ -2,7 +2,7 @@
 
 import aiofiles
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 from typing import Optional
 from doc_crawler.utils.logger import setup_logger
@@ -68,7 +68,7 @@ class MDCWriter:
             Frontmatter string
         """
         domain = urlparse(url).netloc
-        timestamp = datetime.utcnow().isoformat() + 'Z'
+        timestamp = datetime.now(timezone.utc).isoformat()
         
         frontmatter = f"""---
 source: {url}

@@ -3,7 +3,7 @@
 import json
 import aiofiles
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Set
 from doc_crawler.utils.logger import setup_logger
 
@@ -24,7 +24,7 @@ class CrawlState:
         self._state_file = self._state_dir / 'crawl_state.json'
         self._visited_urls: Set[str] = set()
         self._content_hashes: Dict[str, str] = {}
-        self._crawl_timestamp: str = datetime.utcnow().isoformat() + 'Z'
+        self._crawl_timestamp: str = datetime.now(timezone.utc).isoformat()
     
     async def load(self) -> None:
         """Load state from file."""
